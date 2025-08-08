@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<title>Pizza Slice</title>
+<style>
+  :root{
+    --bg:#fff7e6;
+    --crust:#c67a2c;
+    --sauce:#c72716;
+    --cheese:#ffd36b;
+    --plate:#e6f7ff;
+    --cut:#fff;
+    --ui:#222;
+    --btn:#ff6f3c;
+    --btn2:#10b981;
+    --shadow:0 8px 20px rgba(0,0,0,.15);
+  }
+  html,body{height:100%;margin:0;background:linear-gradient(135deg,#ffe8ba 0%,#ffd1dc 100%);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Helvetica,Arial,sans-serif;color:#222;}
+  .wrap{display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;height:100%;padding:14px;}
+  .card{background:var(--bg);border-radius:20px;box-shadow:var(--shadow);padding:12px 12px 16px;max-width:720px;width:100%;}
+  h1{margin:8px 12px 0;font-size:1.6rem;line-height:1.2;display:flex;align-items:center;gap:.5rem}
+  h1 .emoji{filter:drop-shadow(0 2px 0 rgba(0,0,0,.08))}
+  .sub{margin:6px 12px 12px;color:#444}
+  .canvas-wrap{position:relative;border-radius:16px;overflow:hidden;background:radial-gradient(circle at 50% 40%, #ffffff, #f5fbff);padding:8px}
+  canvas{display:block;width:100%;height:auto;touch-action:none;cursor:crosshair;border-radius:12px;background:var(--plate);}
+  .ui{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center;margin-top:10px}
+  button{appearance:none;border:0;border-radius:999px;padding:12px 18px;font-weight:700;letter-spacing:.2px}
+  #eatBtn{background:var(--btn2);color:white;box-shadow:var(--shadow)}
+  #resetBtn{background:var(--btn);color:white;box-shadow:var(--shadow)}
+  #hint{font-size:.92rem;color:#333;background:#fff;border-radius:12px;padding:8px 10px;margin-left:auto;margin-right:auto;box-shadow:var(--shadow)}
+  .chip{display:inline-flex;align-items:center;gap:.35rem;background:#fff;border-radius:999px;padding:6px 10px;box-shadow:var(--shadow);font-size:.85rem;margin:2px 4px}
+  .legend{display:flex;justify-content:center;flex-wrap:wrap;margin-top:6px}
+  .sr{position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1><span class="emoji">🍕</span> Pizza Slice</h1>
+    <div class="sub">Drag to cut the pizza. Make a neat <b>square grid</b>, then tap <b>Eat</b>. Squares = <b>Success</b>. Anything else… <i>womp womp</i>.</div>
+
+    <div class="canvas-wrap">
+      <canvas id="pizza" width="800" height="800" aria-label="Cartoon pizza canvas"></canvas>
+    </div>
+
+    <div class="legend">
+      <span class="chip">Tip: perfectly vertical / horizontal cuts work best</span>
+      <span class="chip">Pinch-zoom your browser if you want more precision</span>
+      <span class="chip">Try to space lines evenly</span>
+    </div>
+
+    <div class="ui">
+      <button id="eatBtn">Eat ✅</button>
+      <button id="resetBtn">Try Again 🔁</button>
+      <div id="hint">Make evenly spaced vertical & horizontal cuts (same count) so cells are squares.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Tiny confetti (pure JS/CSS, no libs) -->
+<canvas id="confetti" class="sr" width="1" height="1"></canvas>
+
+<script>
+(function(){
+  const canvas = document.getElementById('pizza');
+  const ctx = canvas.getContext('2d');
+  const DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  // scale for crisp lines on HiDPI
+  canvas.width *= DPR; canvas.height *= DPR; canvas.style.width='100%'; // visual width via CSS, drawing via DPR
+  const W = canvas.width, H = canvas.height;
+  const cx = W/2, cy = H/2;
+  const R = Math.min(W,H)*0.38;
+
+  let cuts = []; // {x1,y1,x2,y2,angle,kind:'V'|'H',pos:number,length:number}
+  let drawing=false, sx=0, sy=0, ex=0, ey=0;
+
+  // --- Drawing the pizza (cartoony) ---
+  function drawPizzaBase(){
+    ctx.clearRect(0,0,W,H);
+
+    // Plate shadow
+    ctx.beginPath();
+    ctx.arc(cx, cy+R*0.08, R*1.1, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(0,0,0,0.07)';
+    ctx.fill();
+
+    // Plate
+    ctx.beginPath();
+    ctx.arc(cx, cy, R*1.1, 0, Math.PI*2);
+    ctx.fillStyle = getCSS('--plate');
+    ctx.fill();
+
+    // Crust
+    ctx.beginPath();
+    ctx.arc(cx, cy, R*1.02, 0, Math.PI*2);
+    ctx.fillStyle = getCSS('--crust');
+    ctx.fill();
+
+    // Sauce ring glow
+    ctx.beginPath();
+    ctx.arc(cx, cy, R*0.97, 0, Math.PI*2);
+    ctx.fillStyle = getCSS('--sauce');
+    ctx.shadowColor = 'rgba(199,39,22,.25)';
+    ctx.shadowBlur = 24;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Cheese
+    ctx.beginPath();
+    ctx.arc(cx, cy, R*0.92, 0, Math.PI*2);
+    ctx.fillStyle = getCSS('--cheese');
+    ctx.fill();
+
+    // Cheese freckles
+    for(let i=0;i<120;i++){
+      const a = Math.random()*Math.PI*2;
+      const rr = Math.random()*R*0.85;
+      const x = cx + Math.cos(a)*rr, y = cy + Math.sin(a)*rr;
+      if(dist(x,y,cx,cy) > R*0.88) continue;
+      ctx.beginPath();
+      ctx.arc(x,y,Math.random()*3*DPR+1,0,Math.PI*2);
+      ctx.fillStyle = 'rgba(255,150,0,.25)';
+      ctx.fill();
+    }
+
+    // Toppings (pepperoni & mushrooms & peppers)
+    drawPepperoni(16);
+    drawMushrooms(12);
+    drawPeppers(14);
+  }
+
+  function drawPepperoni(n){
+    for(let i=0;i<n;i++){
+      const a = Math.random()*Math.PI*2;
+      const rr = (0.15 + Math.random()*0.7) * R;
+      const x = cx + Math.cos(a)*rr, y = cy + Math.sin(a)*rr;
+      if(dist(x,y,cx,cy) > R*0.82) { i--; continue; }
+      ctx.beginPath();
+      ctx.arc(x,y, R*0.06*(0.75+Math.random()*0.5), 0, Math.PI*2);
+      ctx.fillStyle = '#b22222';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x,y, R*0.03, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(255,255,255,.12)';
+      ctx.fill();
+    }
+  }
+
+  function drawMushrooms(n){
+    for(let i=0;i<n;i++){
+      const a = Math.random()*Math.PI*2;
+      const rr = (0.2 + Math.random()*0.65) * R;
+      const x = cx + Math.cos(a)*rr, y = cy + Math.sin(a)*rr;
+      if(dist(x,y,cx,cy) > R*0.82) { i--; continue; }
+      const r = R*0.05*(0.7+Math.random()*0.6);
+      ctx.save();
+      ctx.translate(x,y);
+      ctx.rotate(Math.random()*Math.PI);
+      // cap
+      roundedRect(-r, -r*0.6, r*2, r*1.05, r*0.55, '#e9e0c9', '#c9bfa7');
+      // stem
+      roundedRect(-r*0.25, -r*0.05, r*0.5, r*0.9, r*0.25, '#efe7cf', '#c9bfa7');
+      ctx.restore();
+    }
+  }
+  function drawPeppers(n){
+    ctx.lineWidth = 3*DPR;
+    for(let i=0;i<n;i++){
+      const a = Math.random()*Math.PI*2;
+      const rr = (0.15 + Math.random()*0.75) * R;
+      const x = cx + Math.cos(a)*rr, y = cy + Math.sin(a)*rr;
+      if(dist(x,y,cx,cy) > R*0.82) { i--; continue; }
+      const r = R*0.08;
+      ctx.beginPath();
+      ctx.strokeStyle = '#00a651';
+      ctx.moveTo(x-r*0.6,y-r*0.2);
+      ctx.bezierCurveTo(x-r*0.4,y-r*0.9, x+r*0.6,y-r*0.7, x+r*0.4, y+r*0.2);
+      ctx.stroke();
+    }
+  }
+
+  function roundedRect(x,y,w,h,r,fill,stroke){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y,x+w,y+h,r);
+    ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);
+    ctx.arcTo(x,y,x+w,y,r);
+    if(fill){ctx.fillStyle=fill;ctx.fill();}
+    if(stroke){ctx.strokeStyle=stroke;ctx.stroke();}
+  }
+
+  // --- Cuts handling ---
+  function start(e){
+    const p = getPos(e);
+    drawing = true; sx = ex = p.x; sy = ey = p.y;
+    e.preventDefault();
+  }
+  function move(e){
+    if(!drawing) return;
+    const p = getPos(e); ex = p.x; ey = p.y;
+    drawAll(true);
+    e.preventDefault();
+  }
+  function end(e){
+    if(!drawing) return;
+    drawing = false;
+    const L = Math.hypot(ex-sx, ey-sy);
+    if(L < R*0.2) { drawAll(false); return; } // too short
+    const angle = (Math.atan2(ey-sy, ex-sx) * 180 / Math.PI + 360) % 180; // 0..180
+    const kind = ( Math.abs(angle) <= 10 || Math.abs(angle-180)<=10 ) ? 'H'
+               : ( Math.abs(angle-90) <= 10 ) ? 'V' : 'X';
+
+    // Compute representative position and effective length intersecting the pizza
+    const inter = lineCircleIntersection(sx,sy,ex,ey,cx,cy,R*0.92);
+    let length = 0, pos = null;
+    if(inter.hit){ length = dist(inter.x1,inter.y1,inter.x2,inter.y2); }
+    if(kind==='V'){
+      // x position sampled at center y
+      pos = lineXatY(sx,sy,ex,ey,cy);
+    }else if(kind==='H'){
+      // y position sampled at center x
+      pos = lineYatX(sx,sy,ex,ey,cx);
+    }
+
+    // Only accept lines that cross most of the pizza
+    if((kind==='V'||kind==='H') && length >= 0.75 * (R*1.84)){
+      // Deduplicate near-by lines
+      const tol = 14*DPR;
+      const arr = cuts.filter(c => c.kind===kind);
+      for(let c of arr){
+        if(Math.abs(c.pos - pos) < tol){
+          c.x1=sx;c.y1=sy;c.x2=ex;c.y2=ey;c.angle=angle;c.length=length;c.pos=(c.pos+pos)/2;
+          drawAll(false);
+          return;
+        }
+      }
+      cuts.push({x1:sx,y1:sy,x2:ex,y2:ey,angle,kind,pos,length});
+    }else{
+      // still store for drawing, but mark as auxiliary (won't count)
+      cuts.push({x1:sx,y1:sy,x2:ex,y2:ey,angle,kind:'X',pos:0,length});
+    }
+    drawAll(false);
+  }
+
+  function drawAll(showTemp){
+    drawPizzaBase();
+    // existing cuts
+    for(const c of cuts){
+      drawCut(c);
+    }
+    // temp stroke while dragging
+    if(showTemp){
+      drawCut({x1:sx,y1:sy,x2:ex,y2:ey,kind:'?',length:999});
+    }
+    // pizza rim gloss
+    ctx.beginPath();
+    ctx.arc(cx, cy, R*0.92, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,255,255,.35)';
+    ctx.lineWidth = 6*DPR;
+    ctx.stroke();
+  }
+
+  function drawCut(c){
+    ctx.save();
+    ctx.lineCap = 'round';
+    // shadow under cut for "depth"
+    ctx.strokeStyle = 'rgba(0,0,0,.2)';
+    ctx.lineWidth = 10*DPR;
+    ctx.beginPath(); ctx.moveTo(c.x1+1*cD(), c.y1+1*cD()); ctx.lineTo(c.x2+1*cD(), c.y2+1*cD()); ctx.stroke();
+    // cut
+    ctx.strokeStyle = (c.kind==='V'||c.kind==='H') ? getCSS('--cut') : 'rgba(255,255,255,.45)';
+    ctx.lineWidth = 6*DPR;
+    ctx.setLineDash(c.kind==='X' ? [14*DPR,10*DPR] : []);
+    ctx.beginPath(); ctx.moveTo(c.x1, c.y1); ctx.lineTo(c.x2, c.y2); ctx.stroke();
+    ctx.restore();
+  }
+  function cD(){return 0.5*DPR;}
+
+  function evaluate(){
+    // Gather vertical and horizontal "good" cuts
+    const vs = cuts.filter(c=>c.kind==='V').map(c=>c.pos).sort((a,b)=>a-b);
+    const hs = cuts.filter(c=>c.kind==='H').map(c=>c.pos).sort((a,b)=>a-b);
+
+    if(vs.length===0 || hs.length===0){
+      alert('Fail 😬 — you need at least one vertical and one horizontal cut.');
+      return false;
+    }
+    if(vs.length !== hs.length){
+      alert(`Fail 😬 — you made ${vs.length} vertical and ${hs.length} horizontal cuts. Squares need the same count.`);
+      return false;
+    }
+
+    // Normalize to pizza coordinate space centered on 0 with edges at -R..+R
+    const toPizzaX = x => x - cx;
+    const toPizzaY = y => y - cy;
+    const v = vs.map(toPizzaX);
+    const h = hs.map(toPizzaY);
+
+    // Include edges to check even spacing (as if lines + edges segment the diameter)
+    const vAll = [-R*0.92, ...v, R*0.92];
+    const hAll = [-R*0.92, ...h, R*0.92];
+
+    const vSp = diffs(vAll), hSp = diffs(hAll);
+    const vOK = isUniform(vSp), hOK = isUniform(hSp);
+
+    // Compare average spacing similarity (squares: dx ≈ dy)
+    const vAvg = avg(vSp), hAvg = avg(hSp);
+    const ratio = vAvg > hAvg ? vAvg/hAvg : hAvg/vAvg;
+
+    if(vOK && hOK && ratio <= 1.15){
+      celebrate();
+      setTimeout(()=>alert('Success! 🎉 Perfect square slices!'), 20);
+      return true;
+    }else{
+      let msg = 'Fail 😬 — ';
+      if(!vOK || !hOK) msg += 'your cut spacing isn’t even enough. ';
+      if(ratio>1.15) msg += 'vertical/horizontal spacing should be similar to make squares.';
+      alert(msg.trim());
+      return false;
+    }
+  }
+
+  // --- Helpers ---
+  function getPos(e){
+    const rect = canvas.getBoundingClientRect();
+    const t = ('touches' in e) ? e.touches[0] || e.changedTouches[0] : e;
+    const x = (t.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (t.clientY - rect.top)  * (canvas.height / rect.height);
+    return {x,y};
+  }
+  function dist(x1,y1,x2,y2){return Math.hypot(x2-x1,y2-y1);}
+  function getCSS(name){return getComputedStyle(document.documentElement).getPropertyValue(name).trim();}
+  function diffs(arr){const d=[];for(let i=1;i<arr.length;i++) d.push(Math.abs(arr[i]-arr[i-1])); return d;}
+  function avg(a){return a.reduce((s,x)=>s+x,0)/a.length;}
+  function isUniform(sp){
+    const a = avg(sp);
+    const mn = Math.min(...sp), mx = Math.max(...sp);
+    // Allow ~20% spread in segment sizes
+    return (mx - mn) <= a * 0.20;
+  }
+
+  function lineXatY(x1,y1,x2,y2, y){
+    // handle near-vertical lines
+    if(Math.abs(x2-x1) < 1e-6) return x1;
+    const m = (y2-y1)/(x2-x1);
+    // x = (y - b)/m ; b = y1 - m*x1
+    const b = y1 - m*x1;
+    return (y - b)/m;
+  }
+  function lineYatX(x1,y1,x2,y2, x){
+    if(Math.abs(y2-y1) < 1e-6) return y1;
+    const m = (y2-y1)/(x2-x1);
+    // y = m x + b
+    const b = y1 - m*x1;
+    return m*x + b;
+  }
+  function lineCircleIntersection(x1,y1,x2,y2, cx,cy,r){
+    // Parametric line P = A + t(B-A), find |P-C|=r
+    const dx = x2-x1, dy = y2-y1;
+    const fx = x1-cx, fy = y1-cy;
+    const A = dx*dx + dy*dy;
+    const B = 2*(fx*dx + fy*dy);
+    const C = fx*fx + fy*fy - r*r;
+    const disc = B*B - 4*A*C;
+    if(disc < 0) return {hit:false};
+    const s = Math.sqrt(disc);
+    const t1 = (-B - s)/(2*A), t2 = (-B + s)/(2*A);
+    const xa = x1 + t1*dx, ya = y1 + t1*dy;
+    const xb = x1 + t2*dx, yb = y1 + t2*dy;
+    return {hit:true,x1:xa,y1:ya,x2:xb,y2:yb};
+  }
+
+  // --- Confetti for success ---
+  function celebrate(){
+    const conf = document.getElementById('confetti');
+    conf.classList.remove('sr');
+    conf.width = canvas.clientWidth; conf.height = 200;
+    const cctx = conf.getContext('2d');
+    const pieces = Array.from({length:130}, ()=>({
+      x: Math.random()*conf.width, y: -10 - Math.random()*120,
+      w: 6+Math.random()*8, h: 8+Math.random()*12,
+      vy: 2+Math.random()*3, vx: -1+Math.random()*2, rot: Math.random()*Math.PI, vr: (-.2+Math.random()*.4)
+    }));
+    let frames = 0;
+    const tick = ()=>{
+      cctx.clearRect(0,0,conf.width,conf.height);
+      pieces.forEach(p=>{
+        p.x += p.vx; p.y += p.vy; p.rot += p.vr;
+        cctx.save(); cctx.translate(p.x,p.y); cctx.rotate(p.rot);
+        cctx.fillStyle = randConfetti();
+        cctx.fillRect(-p.w/2,-p.h/2,p.w,p.h);
+        cctx.restore();
+      });
+      if(frames++ < 120) requestAnimationFrame(tick);
+      else conf.classList.add('sr');
+    };
+    tick();
+  }
+  function randConfetti(){
+    const colors=['#ff6f3c','#ffd36b','#10b981','#3b82f6','#ef4444','#a78bfa','#f472b6'];
+    return colors[(Math.random()*colors.length)|0];
+  }
+
+  // --- Buttons & input listeners ---
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+
+  canvas.addEventListener('touchstart', start, {passive:false});
+  canvas.addEventListener('touchmove', move, {passive:false});
+  canvas.addEventListener('touchend', end, {passive:false});
+  canvas.addEventListener('touchcancel', end, {passive:false});
+
+  document.getElementById('eatBtn').addEventListener('click', evaluate);
+  document.getElementById('resetBtn').addEventListener('click', ()=>{
+    cuts.length = 0; drawAll(false);
+  });
+
+  // Initial render
+  drawAll(false);
+
+  // Resize handling (keep the art crisp when the element size changes)
+  const ro = new ResizeObserver(()=>{ 
+    // maintain DPR scaling; redraw
+    drawAll(false);
+  });
+  ro.observe(canvas);
+
+})();
+</script>
+</body>
+</html>
